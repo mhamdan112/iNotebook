@@ -6,7 +6,14 @@ const connectToMongo = async () => {
         return mongoose.connection;
     }
 
-    return mongoose.connect(mongoURI, { autoIndex: true });
+    console.log('Connecting to MongoDB...');
+    const conn = await mongoose.connect(mongoURI, {
+        autoIndex: true,
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+    });
+    console.log('MongoDB connected successfully');
+    return conn;
 };
 
 module.exports = connectToMongo;

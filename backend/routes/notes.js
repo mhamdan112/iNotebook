@@ -54,7 +54,7 @@ router.put('/updatenote/:id', fetchuser, async (req, res) => {
      }
      //updating the note
      note=await Notes.findByIdAndUpdate(req.params.id,{$set:newNote},{new:true});
-     res.json({note});
+     res.json(note);
     }catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Internal Server Error' });

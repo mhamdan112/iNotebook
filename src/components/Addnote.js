@@ -12,6 +12,9 @@ const Addnote = () => {
   const [summaryError, setSummaryError] = useState('')
   const [isGeneratingNote, setIsGeneratingNote] = useState(false)
   const [generatedNoteError, setGeneratedNoteError] = useState('')
+  const [isAutoTagging, setIsAutoTagging] = useState(false)
+  const [autoTagError, setAutoTagError] = useState('')
+  const [tagSuggestions, setTagSuggestions] = useState([])
 
   const handleclick = (e) => {
     e.preventDefault()
@@ -20,7 +23,44 @@ const Addnote = () => {
     setSummary(null)
     setSummaryError('')
     setGeneratedNoteError('')
+    setAutoTagError('')
+    setTagSuggestions([])
   }
+
+  const handleAutoTag = async () => {
+    try {
+      setIsAutoTagging(true)
+      setAutoTagError('')
+
+      const response = await fetch(`${apiBaseUrl}/api/ai/autotag`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'auth-token': localStorage.getItem('token'),
+        },
+        body: JSON.stringify({ title: note.title, description: note.description }),
+      })
+
+      const json = await response.json()
+      if (!response.ok || !json.success) {
+        throw new Error(json?.error || 'Could not suggest a tag')
+      }
+
+      setNote((currentNote) => ({ ...currentNote, tag: json.tag }))
+      setTagSuggestions(json.suggestions || [])
+    } catch (error) {
+      setAutoTagError(error.message || 'Could not suggest a tag')
+    } finally {
+      setIsAutoTagging(false)
+    }
+  }
+
+  const applySuggestion = (suggestedTag) => {
+    setNote((currentNote) => ({ ...currentNote, tag: suggestedTag }))
+    setTagSuggestions([])
+  }
+
+  const canAutoTag = (note.title + ' ' + note.description).trim().length >= 10
 
   const onChange = (e) => {
     setNote({ ...note, [e.target.name]: e.target.value })
@@ -132,15 +172,45 @@ const Addnote = () => {
             </div>
             <div className="col-12 col-lg-6">
               <label htmlFor="tag" className="form-label fw-semibold">Tag</label>
-              <input
-                value={note.tag}
-                type="text"
-                className="form-control form-control-lg rounded-3"
-                id="tag"
-                name="tag"
-                placeholder="Work, study, personal..."
-                onChange={onChange}
-              />
+              <div className="input-group">
+                <input
+                  value={note.tag}
+                  type="text"
+                  className="form-control form-control-lg rounded-start-3"
+                  id="tag"
+                  name="tag"
+                  placeholder="Work, study, personal..."
+                  onChange={onChange}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline-warning rounded-end-3 fw-semibold"
+                  onClick={handleAutoTag}
+                  disabled={isAutoTagging || !canAutoTag}
+                  title="Let AI suggest a tag for this note"
+                >
+                  <i className="fa-solid fa-wand-magic-sparkles me-2" />
+                  {isAutoTagging ? 'Tagging...' : 'Auto-tag'}
+                </button>
+              </div>
+              {autoTagError ? (
+                <small className="text-danger d-block mt-1">{autoTagError}</small>
+              ) : null}
+              {tagSuggestions.length ? (
+                <div className="d-flex flex-wrap gap-2 mt-2">
+                  <small className="text-secondary align-self-center me-1">Try:</small>
+                  {tagSuggestions.map((suggestedTag) => (
+                    <button
+                      key={suggestedTag}
+                      type="button"
+                      className="btn btn-sm rounded-pill text-bg-warning border-0 px-3"
+                      onClick={() => applySuggestion(suggestedTag)}
+                    >
+                      {suggestedTag}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="col-12">
               <label htmlFor="description" className="form-label fw-semibold">Description</label>

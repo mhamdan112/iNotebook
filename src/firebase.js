@@ -25,4 +25,26 @@ if (firebaseConfigPresent) {
   }
 }
 
+// Firefox's Google sign-in popup flow can throw an internal
+// "INTERNAL ASSERTION FAILED: Pending promise was never set" error (a known
+// firebase-js-sdk bug) that surfaces as an uncaught error. Swallow only that
+// exact message so it never crashes the app.
+const FIREBASE_ASSERTION_MESSAGE = 'Pending promise was never set'
+
+function isFirebaseAssertion(message) {
+  return typeof message === 'string' && message.includes(FIREBASE_ASSERTION_MESSAGE)
+}
+
+window.addEventListener('unhandledrejection', (event) => {
+  if (isFirebaseAssertion(event?.reason?.message)) {
+    event.preventDefault()
+  }
+})
+
+window.addEventListener('error', (event) => {
+  if (isFirebaseAssertion(event?.error?.message || event?.message)) {
+    event.preventDefault()
+  }
+})
+
 export { auth, googleProvider, firebaseConfigPresent }

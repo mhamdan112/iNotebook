@@ -20,7 +20,9 @@ const getnotes = useCallback(async () => {
   },
 });
   const json=await response.json();
-  setNotes(json)
+  if (response.ok && Array.isArray(json)) {
+   setNotes(json)
+  }
 }, [])
 
 //Add a note
@@ -95,7 +97,7 @@ const searchnotes = useCallback(async (query) => {
   },
 });
   const json=await response.json();
-  if (response.ok) {
+  if (response.ok && Array.isArray(json)) {
    setNotes(json)
   } else {
    showAlert(json?.error || 'Failed to search notes', 'danger')

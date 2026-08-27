@@ -6,8 +6,9 @@ export default function Navbar(props) {
   let location =useLocation();
   const handleLogout = () => {
     localStorage.removeItem("token")
-    props.showAlert?.('Logged out successfully', 'success')
     window.location.href = "/login"
+    //show alert message after logout
+    props.showAlert?.('Logged out successfully', 'success')
   }
   
   return (

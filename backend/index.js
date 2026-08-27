@@ -4,9 +4,7 @@ const connectToMongo = require('./db');
 const cors = require('cors');
 const express = require('express');
 
-connectToMongo().catch((error) => {
-  console.error('MongoDB connection failed:', error.message);
-});
+const dbReady = connectToMongo();
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -25,14 +23,25 @@ app.get('/health', (req, res) => {
   res.json({ success: true, message: 'Backend is running' });
 });
 
+app.get('/', (req, res) => {
+  res.json({ success: true, message: 'API is live' });
+});
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/notes', require('./routes/notes'));
 
 if (require.main === module) {
-  app.listen(port, () => {
-    console.log(`Example app listening at http://localhost:${port}`);
-  });
+  dbReady
+    .then(() => {
+      app.listen(port, '0.0.0.0', () => {
+        console.log(`Example app listening at http://0.0.0.0:${port}`);
+      });
+    })
+    .catch((error) => {
+      console.error('Cannot start server — MongoDB connection failed:', error.message);
+      process.exit(1);
+    });
 }
 
 module.exports = app;

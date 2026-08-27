@@ -127,6 +127,146 @@ router.post(
     }
   }
 );
+//----------------- Smart Auto-Tagging -----------------
+const COMMON_TAGS = [
+  'Work', 'Study', 'Personal', 'Ideas', 'Shopping', 'Health',
+  'Finance', 'Travel', 'Projects', 'Important', 'General',
+];
+
+//Keyword-based fallback tagger (no API key or API failure)
+function detectTagFromKeywords(title, description) {
+  const text = `${title} ${description}`.toLowerCase();
+  const keywordMap = [
+    { tag: 'Work', keywords: ['meeting', 'work', 'office', 'client', 'deadline', 'boss', 'task', 'team', 'standup', 'email'] },
+    { tag: 'Projects', keywords: ['project', 'feature', 'bug', 'code', 'api', 'design', 'app', 'website', 'deploy', 'sprint', 'roadmap'] },
+    { tag: 'Study', keywords: ['study', 'exam', 'test', 'learn', 'lecture', 'homework', 'assignment', 'class', 'course', 'school', 'college', 'revise', 'chapter'] },
+    { tag: 'Shopping', keywords: ['buy', 'purchase', 'shopping', 'grocery', 'cart', 'amazon', 'price', 'cost', 'store', 'market'] },
+    { tag: 'Health', keywords: ['health', 'doctor', 'medicine', 'workout', 'gym', 'diet', 'fitness', 'sleep', 'appointment', 'symptom'] },
+    { tag: 'Finance', keywords: ['money', 'finance', 'budget', 'salary', 'bill', 'payment', 'loan', 'invest', 'tax', 'bank', 'rent', 'expense'] },
+    { tag: 'Travel', keywords: ['travel', 'trip', 'flight', 'hotel', 'vacation', 'journey', 'pack', 'booking', 'itinerary'] },
+    { tag: 'Ideas', keywords: ['idea', 'brainstorm', 'concept', 'thought', 'inspiration', 'plan', 'dream', 'creative', 'imagine'] },
+    { tag: 'Important', keywords: ['urgent', 'important', 'todo', 'reminder', 'must', 'asap', 'critical', 'deadline', 'follow up'] },
+    { tag: 'Personal', keywords: ['family', 'friend', 'birthday', 'anniversary', 'party', 'personal', 'hobby', 'weekend'] },
+  ];
+
+  let best = 'General';
+  let bestCount = 0;
+  for (const entry of keywordMap) {
+    let count = 0;
+    for (const keyword of entry.keywords) {
+      if (text.includes(keyword)) {
+        count += 1;
+      }
+    }
+    if (count > bestCount) {
+      best = entry.tag;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function buildTagSuggestions(primaryTag) {
+  const suggestions = COMMON_TAGS.filter((tag) => tag !== primaryTag).slice(0, 3);
+  return [primaryTag, ...suggestions];
+}
+
+function normalizeTagResult(rawText) {
+  try {
+    const parsed = JSON.parse(stripCodeFences(rawText));
+    const tag = typeof parsed.tag === 'string' ? parsed.tag.trim() : '';
+    const suggestions = Array.isArray(parsed.suggestions)
+      ? parsed.suggestions.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+    if (!tag) {
+      return null;
+    }
+    return { tag, suggestions };
+  } catch (error) {
+    return null;
+  }
+}
+
+function sanitizeTag(tag) {
+  const match = COMMON_TAGS.find(
+    (allowed) => allowed.toLowerCase() === String(tag || '').trim().toLowerCase()
+  );
+  return match || 'General';
+}
+
+async function suggestTagWithGemini(title, description) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  const allowedTags = COMMON_TAGS.join(', ');
+  const promptText = [
+    `Title: ${title || 'Untitled note'}`,
+    `Note: ${description}`,
+    '',
+    `Pick the single best category for this note from this list: ${allowedTags}.`,
+    `Return ONLY valid JSON with keys: tag (exactly one of the allowed tags, prefer "General" if unsure) and suggestions (array of 3 other fitting tags from the allowed list).`,
+  ].join('\n');
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: promptText }] }],
+      generationConfig: { temperature: 0.2 },
+    }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = await response.json();
+  const content = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
+  const parsed = normalizeTagResult(content);
+  if (!parsed) {
+    return null;
+  }
+
+  const tag = sanitizeTag(parsed.tag);
+  const suggestions = parsed.suggestions
+    .map(sanitizeTag)
+    .filter((suggestedTag, index, array) => suggestedTag !== tag && array.indexOf(suggestedTag) === index)
+    .slice(0, 3);
+  return { tag, suggestions, provider: 'gemini' };
+}
+
+router.post(
+  '/autotag',
+  fetchuser,
+  async (req, res) => {
+    try {
+      const title = String(req.body.title || '').trim();
+      const description = String(req.body.description || '').trim();
+
+      if ((title + ' ' + description).trim().length < 10) {
+        return res.status(400).json({ error: 'Provide a bit more content so we can suggest a tag' });
+      }
+
+      const geminiResult = await suggestTagWithGemini(title, description);
+      if (geminiResult) {
+        return res.json({ success: true, ...geminiResult, suggestions: buildTagSuggestions(geminiResult.tag) });
+      }
+
+      const tag = detectTagFromKeywords(title, description);
+      return res.json({ success: true, tag, suggestions: buildTagSuggestions(tag), provider: 'fallback' });
+    } catch (error) {
+      console.error(error.message);
+      const tag = detectTagFromKeywords(String(req.body.title || ''), String(req.body.description || ''));
+      return res.json({ success: true, tag, suggestions: buildTagSuggestions(tag), provider: 'fallback-error' });
+    }
+  }
+);
+
 //function to create a note from Raw Text
 function createNoteFromRawText(rawText) {
   const cleanedText = rawText.replace(/\s+/g, ' ').trim();
