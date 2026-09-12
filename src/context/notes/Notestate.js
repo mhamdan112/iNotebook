@@ -2,7 +2,7 @@
 import { useCallback, useState } from 'react'
 import NoteContext from './notescontext'
 
-const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'
+const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000'
 
 const NoteState = (props) => {
   const { showAlert } = props

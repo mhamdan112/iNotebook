@@ -1,29 +1,27 @@
 import React,{useState} from 'react'
 import { useNavigate } from 'react-router-dom';
 import GoogleAuthButton from './GoogleAuthButton';
+import { supabase } from '../supabaseClient';
 const Login = (props) => {
 
  const [credentials, setCredentials] = useState({email:"",password:""})
  const navigate = useNavigate();
  const handlesubmit = async(e) => {
     e.preventDefault();
-  const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/auth/login`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({email:credentials.email,password:credentials.password}),
+  if (!supabase) {
+    props.showAlert('Supabase is not configured', 'danger');
+    return;
+  }
+  const { error } = await supabase.auth.signInWithPassword({
+    email: credentials.email,
+    password: credentials.password,
   });
-
-  const json=await response.json();
-  if(json.success){
-
-    localStorage.setItem('token',json.authToken);
+  if (!error) {
     navigate("/");
     props.showAlert("Logged in Successfully","success");
   }
   else{
-    props.showAlert("Invalid Credentials","danger");
+    props.showAlert(error.message || "Invalid Credentials","danger");
   }
   
   }

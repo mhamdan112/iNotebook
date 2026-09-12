@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react'
 import Context from '../context/notes/notescontext'
 
-const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'
+const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000'
 
 const Addnote = () => {
   const noteContext = useContext(Context)

@@ -1,6 +1,7 @@
 import React,{useState} from 'react'
 import { useNavigate } from 'react-router-dom';
 import GoogleAuthButton from './GoogleAuthButton';
+import { supabase } from '../supabaseClient';
 
 const Signup = (props) => {
     const [credentials, setCredentials] = useState({name:"",email:"",password:"",cpassword:""})
@@ -8,26 +9,26 @@ const Signup = (props) => {
  const handlesubmit = async(e) => {
     e.preventDefault();
     if (credentials.password !== credentials.cpassword) {
-      alert("Passwords do not match");
+      props.showAlert("Passwords do not match", "warning");
       return;
     }
-  const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/auth/createUser`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({name:credentials.name,email:credentials.email,password:credentials.password}),
+  if (!supabase) {
+    props.showAlert('Supabase is not configured', 'danger');
+    return;
+  }
+  const { data, error } = await supabase.auth.signUp({
+    email: credentials.email,
+    password: credentials.password,
+    options: { data: { name: credentials.name } },
   });
-
-  const json=await response.json();
-  if(json.success){
-
-    localStorage.setItem('token',json.authToken);
+  if (!error && data.session) {
     navigate("/");
     props.showAlert("Account Created Successfully","success");
+  } else if (!error && !data.session) {
+    props.showAlert("Check your email to confirm your account","info");
   }
   else{
-    props.showAlert("Invalid Credentials","danger");
+    props.showAlert(error.message || "Could not create account","danger");
   }
   }
 const onChange = (e) => {
