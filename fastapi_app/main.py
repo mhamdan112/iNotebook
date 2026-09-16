@@ -1,4 +1,5 @@
 import os
+import json
 import re
 from typing import Any
 
@@ -7,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
+import httpx
 import supabase as supabase_sdk
 
 create_client = getattr(supabase_sdk, 'create_client')
@@ -14,6 +16,8 @@ create_client = getattr(supabase_sdk, 'create_client')
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 SUPABASE_URL = os.environ['SUPABASE_URL']
 SUPABASE_SERVICE_ROLE_KEY = os.environ['SUPABASE_SERVICE_ROLE_KEY']
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
 supabase: Any = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 origins = [item.strip() for item in os.getenv('CORS_ORIGIN', 'http://localhost:3000').split(',') if item.strip()]
 app = FastAPI(title='iNotebook API')
@@ -131,13 +135,45 @@ def search_notes(q: str = Query('', min_length=1), user: dict[str, Any] = Depend
 
 
 def sentences(text: str) -> list[str]:
-    return [part.strip() for part in re.split(r'(?<=[.!?])\s+', re.sub(r'\s+', ' ', text.strip())) if part.strip()]
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])\s+', re.sub(r'\s+', ' ', text.strip())) if part.strip()]
+    unique_parts: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        normalized = re.sub(r'[^a-z0-9]+', ' ', part.lower()).strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique_parts.append(part)
+    return unique_parts
 
 
 def fallback_summary(text: str) -> dict[str, Any]:
     items = sentences(text)
-    summary = ' '.join(items[:2])[:280] or text[:280]
-    return {'summary': summary or 'No summary could be generated.', 'bullets': items[:4] or [summary], 'provider': 'fallback'}
+    summary = ' '.join(items[:2])[:280] or re.sub(r'\s+', ' ', text.strip())[:280]
+    bullets = items[:4] or [summary]
+    return {'summary': summary or 'No summary could be generated.', 'bullets': bullets, 'provider': 'fallback'}
+
+
+def gemini_json(prompt: str) -> dict[str, Any] | None:
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        response = httpx.post(
+            f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent',
+            params={'key': GEMINI_API_KEY},
+            json={
+                'contents': [{'parts': [{'text': prompt}]}],
+                'generationConfig': {'temperature': 0.2, 'responseMimeType': 'application/json'},
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        candidates = response.json().get('candidates', [])
+        text = candidates[0]['content']['parts'][0]['text'].strip()
+        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.IGNORECASE)
+        result = json.loads(text)
+        return result if isinstance(result, dict) else None
+    except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError):
+        return None
 
 
 COMMON_TAGS = ['Work', 'Study', 'Personal', 'Ideas', 'Shopping', 'Health', 'Finance', 'Travel', 'Projects', 'Important', 'General']
@@ -158,7 +194,20 @@ def summarize(payload: dict[str, Any], user: dict[str, Any] = Depends(current_us
     description = str(payload.get('description', '')).strip()
     if len(description) < 10:
         raise HTTPException(400, 'Description must be at least 10 characters long')
-    return {'success': True, **fallback_summary(f"{payload.get('title', '')}. {description}")}
+    title = str(payload.get('title', '')).strip()
+    source = f'{title}. {description}' if title and title.lower() not in description.lower() else description
+    generated = gemini_json(
+        'Summarize the following note for a busy person. Remove repetition. '
+        'Return only JSON with a concise string field "summary" and an array field "bullets" '
+        'containing 2 to 4 distinct, useful points. Do not invent facts.\n\n'
+        f'Note:\n{source}'
+    )
+    if generated:
+        summary = str(generated.get('summary', '')).strip()
+        bullets = [str(item).strip() for item in generated.get('bullets', []) if str(item).strip()]
+        if summary and bullets:
+            return {'success': True, 'summary': summary, 'bullets': bullets[:4], 'provider': 'gemini'}
+    return {'success': True, **fallback_summary(source)}
 
 
 @app.post('/api/ai/autotag')
@@ -166,11 +215,49 @@ def autotag(payload: dict[str, Any], user: dict[str, Any] = Depends(current_user
     text = f"{payload.get('title', '')} {payload.get('description', '')}".strip()
     if len(text) < 10:
         raise HTTPException(400, 'Provide a bit more content so we can suggest a tag')
+    generated = gemini_json(
+        f'Choose the single best category for this note. Return only JSON with a string field "tag". '
+        f'The tag must be exactly one of: {", ".join(COMMON_TAGS)}.\n\nNote:\n{text}'
+    )
+    if generated:
+        tag = str(generated.get('tag', '')).strip()
+        tag = next((item for item in COMMON_TAGS if item.lower() == tag.lower()), '')
+        if tag:
+            return {'success': True, 'tag': tag, 'suggestions': [tag] + [item for item in COMMON_TAGS if item != tag][:3], 'provider': 'gemini'}
     tag = detect_tag(text)
     return {'success': True, 'tag': tag, 'suggestions': [tag] + [item for item in COMMON_TAGS if item != tag][:3], 'provider': 'fallback'}
 
 
 @app.post('/api/ai/createNoteFromRawText')
 def create_note_from_text(payload: RawTextBody, user: dict[str, Any] = Depends(current_user)):
-    items = sentences(payload.rawText)
-    return {'success': True, 'title': items[0] if items else 'Untitled note', 'description': ' '.join(items[1:]) or payload.rawText.strip(), 'tag': 'General'}
+    raw_text = re.sub(r'\s+', ' ', payload.rawText.strip())
+    items = sentences(raw_text)
+    if not items:
+        return {'success': True, 'title': 'Untitled note', 'description': raw_text, 'tag': 'General'}
+
+    generated = gemini_json(
+        f'Convert this raw text into a useful note. Return only JSON with string fields "title", '
+        f'"description", and "tag". The title must be concise (3 to 8 words), must not copy the full '
+        f'description, and the description must preserve the important meaning without repetition. '
+        f'Choose tag from exactly: {", ".join(COMMON_TAGS)}. Do not invent facts.\n\nRaw text:\n{raw_text}'
+    )
+    if generated:
+        title = str(generated.get('title', '')).strip()
+        description = str(generated.get('description', '')).strip()
+        tag = str(generated.get('tag', '')).strip()
+        tag = next((item for item in COMMON_TAGS if item.lower() == tag.lower()), 'General')
+        if 3 <= len(title) <= 100 and len(description) >= 5 and title.lower() != description.lower():
+            return {'success': True, 'title': title, 'description': description, 'tag': tag, 'provider': 'gemini'}
+
+    first_sentence = items[0].rstrip('.!?').strip()
+    words = first_sentence.split()
+    if len(items) > 1:
+        title = first_sentence[:80]
+        description = ' '.join(items[1:]).strip()
+    else:
+        title = ' '.join(words[:5]).rstrip(',;:')[:80] or 'Untitled note'
+        description = raw_text
+
+    if len(title) < 3:
+        title = 'Untitled note'
+    return {'success': True, 'title': title, 'description': description, 'tag': detect_tag(raw_text)}
