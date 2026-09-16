@@ -2,11 +2,9 @@ import React, { useState, useContext } from 'react'
 import Context from '../context/notes/notescontext'
 
 const configuredApiUrl = process.env.REACT_APP_API_BASE_URL || ''
-const apiBaseUrl = configuredApiUrl && !configuredApiUrl.includes('localhost')
-  ? configuredApiUrl
-  : window.location.hostname === 'localhost'
-    ? 'http://localhost:8000'
-    : window.location.origin
+const apiBaseUrl = window.location.hostname === 'localhost'
+  ? (configuredApiUrl && !configuredApiUrl.includes('localhost') ? configuredApiUrl : 'http://localhost:8000')
+  : window.location.origin
 
 const Addnote = () => {
   const noteContext = useContext(Context)
