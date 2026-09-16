@@ -5,7 +5,7 @@ import Navbar from './components/Navbar';
 import About from './components/About';
 import Home from './components/Home';
 import Login from './components/login';
-import Signup from './components/signupignup';
+import Signup from './components/signup';
 import NoteState from './context/notes/Notestate';
 import Alert from './components/Alert';
 import { useState } from 'react';
