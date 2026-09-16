@@ -7,15 +7,16 @@ import { useNavigate } from "react-router-dom";
 const Notes = (props) => {
   const NoteContext = useContext(Context);
   let history = useNavigate();
-  const { notes: rawNotes, getnotes, editnote, searchnotes } = NoteContext;
+  const { notes: rawNotes, getnotes, editnote, searchnotes, authReady, authToken } = NoteContext;
   const notes = Array.isArray(rawNotes) ? rawNotes : [];
   useEffect(() => {
-    if (localStorage.getItem("token")) {
+    if (!authReady) return;
+    if (authToken) {
      getnotes();
     } else {
       history("/login");
     }
-  }, [getnotes, history]);
+  }, [authReady, authToken, getnotes, history]);
   const ref = useRef(null);
   const refClose = useRef(null);
   const [note, setNote] = useState({eid: "", etitle: "", edescription: "", etag: "" });
